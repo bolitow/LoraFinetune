@@ -1,8 +1,17 @@
 # Guide de déploiement RunPod pour Qwen Coder v2.5 7B LoRA
 
+## Prérequis
+
+- Git LFS installé localement (le projet utilise des fichiers volumineux)
+- Token HuggingFace avec accès au modèle Qwen2.5-Coder-7B
+- Compte RunPod avec crédits
+
 ## 1. Préparer votre projet localement
 
 ```bash
+# S'assurer que Git LFS est installé
+git lfs install
+
 # Commit vos changements
 git add .
 git commit -m "Update for Qwen Coder v2.5 7B training"
@@ -15,7 +24,7 @@ git push
 2. Créez un nouveau pod avec :
    - **GPU**: RTX 4090 ou A100 (minimum 24GB VRAM pour 7B model)
    - **Template**: PyTorch 2.1 + CUDA 12.1
-   - **Disk**: 50GB minimum
+   - **Disk**: 100GB minimum (pour accommoder le modèle et les données LFS)
    - **Options**: SSH activé
 
 ## 3. Se connecter au pod
@@ -28,8 +37,11 @@ ssh root@[YOUR_POD_IP] -p [YOUR_SSH_PORT]
 
 ```bash
 cd /workspace
-git clone [YOUR_GITHUB_REPO_URL]
-cd EndToEndLoRA
+# Le script runpod_deploy.sh va automatiquement cloner le repo avec Git LFS
+# Si vous préférez le faire manuellement :
+# git clone https://github.com/bolitow/LoraFinetune.git EndToEndLoRA
+# cd EndToEndLoRA
+# git lfs pull
 ```
 
 ## 5. Configurer HuggingFace
@@ -44,6 +56,12 @@ export HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxx"
 ```bash
 ./runpod_deploy.sh
 ```
+
+Ce script va automatiquement :
+- Installer Git LFS sur le pod
+- Cloner le repository avec les fichiers LFS
+- Installer uv et toutes les dépendances
+- Configurer l'environnement d'entraînement
 
 ## 7. Lancer l'entraînement
 
