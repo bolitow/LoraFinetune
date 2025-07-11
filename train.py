@@ -48,7 +48,7 @@ def format_chat_template(batch, tokenizer):
         "text": samples  # The processed chat template text for each row
     }
 
-base_model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+base_model = "../models/qwen2.5_coder_7b_instruct"
 print(f"\n[{datetime.datetime.now()}] Loading tokenizer from {base_model}...")
 tokenizer = AutoTokenizer.from_pretrained(
         base_model, 
