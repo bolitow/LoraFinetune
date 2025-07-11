@@ -38,11 +38,21 @@ if [ ! -d ".git" ]; then
     git lfs pull
 fi
 
-# Step 7: Check for data directory
+# Step 7: Check for data directory and Git LFS
 if [ ! -d "data" ]; then
     echo "ERROR: data directory not found!"
     echo "Please upload your data folder with instruction.json"
     exit 1
+fi
+
+# Check if instruction.json is a Git LFS pointer
+if [ -f "data/instruction.json" ]; then
+    if head -n 1 data/instruction.json | grep -q "version https://git-lfs.github.com"; then
+        echo "Detected Git LFS pointer for data/instruction.json"
+        echo "Pulling LFS data..."
+        git lfs pull
+    fi
+    echo "Data file size: $(ls -lh data/instruction.json | awk '{print $5}')"
 fi
 
 # Step 8: Create output directories
