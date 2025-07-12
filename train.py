@@ -2,11 +2,13 @@ from datasets import load_dataset
 from colorama import Fore
 import datetime
 import os
+import shutil
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from trl import SFTTrainer, SFTConfig
-from peft import LoraConfig, prepare_model_for_kbit_training
+from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 import torch
+from huggingface_hub import HfApi, create_repo
 
 print(f"[{datetime.datetime.now()}] Starting training script...")
 print(f"CUDA available: {torch.cuda.is_available()}")
@@ -111,7 +113,7 @@ trainer = SFTTrainer(
         learning_rate=2e-4,
         logging_steps=10,
         optim="adamw_8bit",
-        save_steps=50,
+        save_strategy="no",  # Disable checkpoint saving during training
         gradient_checkpointing=True,
         report_to="none",
         fp16=True,
@@ -132,12 +134,145 @@ trainer.train()
 print(f"=" * 50)
 print(f"\n[{datetime.datetime.now()}] Training completed!")
 
-print(f"\n[{datetime.datetime.now()}] Saving complete checkpoint...")
-trainer.save_model('complete_checkpoint')
-print(f"Complete checkpoint saved to: complete_checkpoint/")
+# Get HuggingFace username
+hf_username = os.environ.get("HF_USERNAME")
+if not hf_username:
+    print(f"WARNING: HF_USERNAME not set. Will not publish to HuggingFace.")
+    print(f"To publish, set: export HF_USERNAME='your-huggingface-username'")
 
-print(f"\n[{datetime.datetime.now()}] Saving final model...")
-trainer.model.save_pretrained("final_model")
-print(f"Final model saved to: final_model/")
+# Prepare repository name
+repo_name = f"qwen2.5-coder-7b-lora-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+full_repo_id = f"{hf_username}/{repo_name}" if hf_username else None
+
+print(f"\n[{datetime.datetime.now()}] Merging LoRA weights with base model...")
+print(f"This will create a complete model with all weights merged...")
+
+# Get the base model without quantization for merging
+print(f"Loading base model without quantization...")
+base_model_for_merge = AutoModelForCausalLM.from_pretrained(
+    base_model,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    token=os.environ.get("HF_TOKEN"),
+)
+
+# Save LoRA adapter first
+print(f"Saving LoRA adapter...")
+trainer.model.save_pretrained("temp_lora_adapter")
+
+# Merge LoRA weights
+print(f"Merging LoRA weights...")
+merged_model = PeftModel.from_pretrained(base_model_for_merge, "temp_lora_adapter")
+merged_model = merged_model.merge_and_unload()
+
+# Clean up temporary adapter
+shutil.rmtree("temp_lora_adapter")
+
+# Save the complete merged model locally
+print(f"\n[{datetime.datetime.now()}] Saving merged model locally...")
+merged_model.save_pretrained("final_merged_model")
+tokenizer.save_pretrained("final_merged_model")
+print(f"Complete merged model saved to: final_merged_model/")
+
+# Publish to HuggingFace if username is set
+if hf_username:
+    print(f"\n[{datetime.datetime.now()}] Publishing to HuggingFace...")
+    print(f"Repository: {full_repo_id}")
+    
+    try:
+        # Create repository
+        api = HfApi()
+        create_repo(
+            repo_id=full_repo_id,
+            token=os.environ.get("HF_TOKEN"),
+            private=True,  # Make it private by default
+            exist_ok=True
+        )
+        
+        # Push model and tokenizer
+        merged_model.push_to_hub(
+            full_repo_id,
+            token=os.environ.get("HF_TOKEN"),
+            commit_message="Initial model upload"
+        )
+        tokenizer.push_to_hub(
+            full_repo_id,
+            token=os.environ.get("HF_TOKEN"),
+            commit_message="Add tokenizer"
+        )
+        
+        print(f"✓ Model successfully published to: https://huggingface.co/{full_repo_id}")
+        
+        # Create model card
+        model_card_content = f"""---
+license: apache-2.0
+base_model: Qwen/Qwen2.5-Coder-7B-Instruct
+tags:
+- generated_from_trainer
+- lora
+- qwen
+- code
+datasets:
+- custom
+---
+
+# {repo_name}
+
+This model is a fine-tuned version of [Qwen/Qwen2.5-Coder-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct) using LoRA.
+
+## Training Details
+
+- **Base model**: Qwen2.5-Coder-7B-Instruct
+- **Training method**: LoRA (r=256, alpha=512)
+- **Training date**: {datetime.datetime.now().strftime('%Y-%m-%d')}
+- **Framework**: transformers, peft, trl
+
+## Usage
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("{full_repo_id}")
+tokenizer = AutoTokenizer.from_pretrained("{full_repo_id}")
+
+# Use the model
+messages = [
+    {{"role": "system", "content": "You are a helpful assistant."}},
+    {{"role": "user", "content": "Your question here"}}
+]
+text = tokenizer.apply_chat_template(messages, tokenize=False)
+inputs = tokenizer(text, return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=512)
+response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+```
+"""
+        
+        # Save and push model card
+        with open("final_merged_model/README.md", "w") as f:
+            f.write(model_card_content)
+        
+        api.upload_file(
+            path_or_fileobj="final_merged_model/README.md",
+            path_in_repo="README.md",
+            repo_id=full_repo_id,
+            token=os.environ.get("HF_TOKEN"),
+            commit_message="Add model card"
+        )
+        
+    except Exception as e:
+        print(f"✗ Error publishing to HuggingFace: {e}")
+        print(f"Model is saved locally in: final_merged_model/")
+
+# Clean up checkpoint directory if it exists
+if os.path.exists("Qwen2.5-Coder-7B-LoRA"):
+    print(f"\n[{datetime.datetime.now()}] Cleaning up checkpoint directory...")
+    shutil.rmtree("Qwen2.5-Coder-7B-LoRA")
+    print(f"✓ Checkpoint directory removed")
 
 print(f"\n[{datetime.datetime.now()}] All done! 🎉")
+print(f"\nSummary:")
+print(f"- Merged model saved locally: final_merged_model/")
+if full_repo_id:
+    print(f"- Published to HuggingFace: https://huggingface.co/{full_repo_id}")
+else:
+    print(f"- To publish to HuggingFace, set HF_USERNAME and run again")

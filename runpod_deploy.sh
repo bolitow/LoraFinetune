@@ -24,11 +24,16 @@ cp pyproject_use_this_one_on_runpod.toml pyproject.toml
 echo "Installing dependencies..."
 uv sync
 
-# Step 5: Set HuggingFace token (if not already set)
+# Step 5: Set HuggingFace token and username (if not already set)
 if [ -z "$HF_TOKEN" ]; then
     echo "WARNING: HF_TOKEN environment variable not set!"
     echo "Please run: export HF_TOKEN='your-huggingface-token'"
     echo "You can get a token from: https://huggingface.co/settings/tokens"
+fi
+
+if [ -z "$HF_USERNAME" ]; then
+    echo "INFO: HF_USERNAME not set. Model will not be published to HuggingFace."
+    echo "To enable automatic publishing, run: export HF_USERNAME='your-huggingface-username'"
 fi
 
 # Step 6: Clone repository with Git LFS if needed
@@ -57,9 +62,7 @@ fi
 
 # Step 8: Create output directories
 echo "Creating output directories..."
-mkdir -p Qwen2.5-Coder-7B-LoRA
-mkdir -p complete_checkpoint
-mkdir -p final_model
+mkdir -p final_merged_model
 mkdir -p workspace
 
 # Step 9: Show GPU info
@@ -70,6 +73,7 @@ nvidia-smi
 echo "=== Setup Complete ==="
 echo "To start training, run:"
 echo "  export HF_TOKEN='your-huggingface-token'"
+echo "  export HF_USERNAME='your-huggingface-username'  # Optional: for auto-publishing"
 echo "  uv run train.py"
 echo ""
 echo "Monitor GPU usage with: watch -n 1 nvidia-smi"
