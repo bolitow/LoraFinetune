@@ -22,10 +22,12 @@ git push
 
 1. Allez sur [RunPod.io](https://runpod.io)
 2. Créez un nouveau pod avec :
-   - **GPU**: RTX 4090 ou A100 (minimum 24GB VRAM pour 7B model)
+   - **GPU**: RTX 6000 Ada (48GB VRAM recommandé) ou RTX 4090/A100 (24GB minimum)
    - **Template**: PyTorch 2.1 + CUDA 12.1
    - **Disk**: 100GB minimum (pour accommoder le modèle et les données LFS)
    - **Options**: SSH activé
+   
+   Note: Avec RTX 6000 Ada (48GB), le training est optimisé pour des performances maximales
 
 ## 3. Se connecter au pod
 
@@ -51,7 +53,14 @@ cd /workspace
 export HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxx"
 ```
 
-## 6. Lancer le script de déploiement
+## 6. Configuration pour publication automatique (optionnel)
+
+```bash
+# Pour publier automatiquement le modèle sur HuggingFace
+export HF_USERNAME="votre-username-huggingface"
+```
+
+## 7. Lancer le script de déploiement
 
 ```bash
 ./runpod_deploy.sh
@@ -63,39 +72,58 @@ Ce script va automatiquement :
 - Installer uv et toutes les dépendances
 - Configurer l'environnement d'entraînement
 
-## 7. Lancer l'entraînement
+## 8. Lancer l'entraînement
 
 ```bash
 uv run train.py
 ```
 
-## 8. Surveiller l'entraînement
+## 9. Surveiller l'entraînement
 
 Dans un autre terminal SSH :
 ```bash
 watch -n 1 nvidia-smi
 ```
 
-## Paramètres d'entraînement optimisés
+## Paramètres d'entraînement optimisés pour RTX 6000 Ada
 
-Le script est configuré pour :
-- **Batch size**: 1 (pour économiser la VRAM)
-- **Gradient accumulation**: 4 steps
-- **Max steps**: 100 (ajustable)
-- **Learning rate**: 2e-4
+Le script détecte automatiquement votre GPU et optimise les paramètres :
+
+### Configuration RTX 6000 Ada (48GB) :
+- **Batch size**: 8 par GPU
+- **Gradient accumulation**: 2 steps (batch effectif = 16)
+- **LoRA rank**: 512 avec RSLoRA
+- **Learning rate**: 5e-5 avec cosine decay
+- **Precision**: BF16 + TF32 + Flash Attention 2
+- **Optimisations**: Sequence packing, paged AdamW
+- **Max sequence length**: 2048 tokens
+
+### Configuration RTX 4090/A100 (24GB) :
+- **Batch size**: 1-2 par GPU
+- **Gradient accumulation**: 4-8 steps
+- **LoRA rank**: 256
 - **Mixed precision**: FP16
-- **8-bit optimizer**: Pour économiser la mémoire
 
 ## Après l'entraînement
 
-Les modèles seront sauvegardés dans :
-- `Qwen2.5-Coder-7B-LoRA/` - Checkpoints intermédiaires
-- `complete_checkpoint/` - Checkpoint complet
-- `final_model/` - Modèle final
+Le modèle final fusionné sera sauvegardé dans :
+- `final_merged_model/` - Modèle complet avec poids LoRA fusionnés
+
+Si HF_USERNAME est configuré :
+- Publication automatique sur HuggingFace (repository privé)
+- Nom du repo : `qwen2.5-coder-7b-lora-YYYYMMDD-HHMMSS`
 
 ## Télécharger les résultats
 
 ```bash
 # Depuis votre machine locale
-scp -P [SSH_PORT] -r root@[POD_IP]:/workspace/EndToEndLoRA/final_model ./
+scp -P [SSH_PORT] -r root@[POD_IP]:/workspace/EndToEndLoRA/final_merged_model ./
 ```
+
+## Statistiques de performance
+
+Le script affiche automatiquement :
+- Temps total d'entraînement
+- Loss final
+- Métriques de performance
+- Lien HuggingFace si publié

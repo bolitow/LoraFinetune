@@ -75,14 +75,20 @@ quant_config = BitsAndBytesConfig(
 
 print(f"\n[{datetime.datetime.now()}] Loading model {base_model} with 4-bit quantization...")
 print(f"This may take a few minutes...")
+
+# Enable Flash Attention 2 for RTX 6000 Ada
+os.environ["FLASH_ATTENTION_SKIP_CUDA_BUILD"] = "TRUE"
+
 model = AutoModelForCausalLM.from_pretrained(
     base_model,
     device_map="cuda:0",
     quantization_config=quant_config,
     token=os.environ.get("HF_TOKEN"),  # Use environment variable
     cache_dir="./workspace",
+    attn_implementation="flash_attention_2",  # Enable Flash Attention 2
+    torch_dtype=torch.bfloat16,
 )
-print(f"Model loaded successfully!")
+print(f"Model loaded successfully with Flash Attention 2!")
 
 print(f"\n[{datetime.datetime.now()}] Preparing model for training...")
 model.gradient_checkpointing_enable()
@@ -90,49 +96,82 @@ model = prepare_model_for_kbit_training(model)
 print(f"Model prepared for k-bit training")
 
 print(f"\n[{datetime.datetime.now()}] Setting up LoRA configuration...")
+# Optimized LoRA config for better quality with 48GB VRAM
 peft_config = LoraConfig(
-    r=256,
-    lora_alpha=512,
-    lora_dropout=0.05,
-    target_modules="all-linear",
+    r=512,                          # Increased rank for better expressiveness
+    lora_alpha=1024,                # Alpha = 2*r for optimal scaling
+    lora_dropout=0.1,               # Slightly higher dropout for regularization
+    target_modules="all-linear",    # Target all linear layers
     task_type="CAUSAL_LM",
+    use_rslora=True,                # Use Rank-Stabilized LoRA for better training
+    init_lora_weights="gaussian",   # Better initialization
 )
-print(f"LoRA config: r={peft_config.r}, alpha={peft_config.lora_alpha}")
+print(f"LoRA config: r={peft_config.r}, alpha={peft_config.lora_alpha}, RSLoRA=True")
 
 print(f"\n[{datetime.datetime.now()}] Initializing trainer...")
+
+# Optimized settings for RTX 6000 Ada (48GB VRAM)
 trainer = SFTTrainer(
     model,
     train_dataset=train_dataset,
     args=SFTConfig(
         output_dir="Qwen2.5-Coder-7B-LoRA",
         num_train_epochs=3,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        warmup_steps=10,
-        max_steps=100,
-        learning_rate=2e-4,
+        per_device_train_batch_size=8,  # Increased from 1 to 8 for 48GB VRAM
+        gradient_accumulation_steps=2,   # Reduced from 4 to 2 (effective batch = 16)
+        warmup_ratio=0.1,               # 10% warmup steps
+        max_steps=-1,                   # Train on full dataset
+        learning_rate=5e-5,             # Optimized learning rate
+        lr_scheduler_type="cosine",     # Cosine decay for better convergence
         logging_steps=10,
-        optim="adamw_8bit",
-        save_strategy="no",  # Disable checkpoint saving during training
+        optim="paged_adamw_32bit",     # Better optimizer for larger batches
+        save_strategy="no",             # Disable checkpoint saving during training
         gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},  # More memory efficient
         report_to="none",
-        fp16=True,
+        bf16=True,                      # Use bf16 instead of fp16 for better stability
+        tf32=True,                      # Enable TF32 on Ada architecture
+        dataloader_num_workers=4,       # Parallel data loading
+        remove_unused_columns=False,
+        dataset_text_field="text",      # Specify text field explicitly
+        max_seq_length=2048,            # Optimal sequence length
+        packing=True,                   # Pack multiple examples in one sequence
     ),
     peft_config=peft_config,
 )
 print(f"Trainer initialized successfully")
-print(f"Training parameters:")
-print(f"  - Batch size: 1")
-print(f"  - Gradient accumulation: 4")
-print(f"  - Max steps: 100")
-print(f"  - Learning rate: 2e-4")
-print(f"  - Save steps: 50")
+print(f"\nOptimized training parameters for RTX 6000 Ada:")
+print(f"  - Per device batch size: 8")
+print(f"  - Gradient accumulation: 2")
+print(f"  - Effective batch size: 16")
+print(f"  - Learning rate: 5e-5 (cosine decay)")
+print(f"  - Precision: bfloat16 + TF32")
+print(f"  - Sequence packing: enabled")
+print(f"  - Dataset size: {len(train_dataset)} examples")
 
 print(f"\n[{datetime.datetime.now()}] Starting training...")
 print(f"=" * 50)
+
+# Track training time
+training_start_time = datetime.datetime.now()
+
+# Start training
 trainer.train()
+
+# Calculate training duration
+training_end_time = datetime.datetime.now()
+training_duration = training_end_time - training_start_time
+
 print(f"=" * 50)
 print(f"\n[{datetime.datetime.now()}] Training completed!")
+print(f"Total training time: {training_duration}")
+print(f"Training metrics:")
+if hasattr(trainer.state, 'log_history') and trainer.state.log_history:
+    final_metrics = trainer.state.log_history[-1]
+    if 'loss' in final_metrics:
+        print(f"  - Final loss: {final_metrics['loss']:.4f}")
+    if 'learning_rate' in final_metrics:
+        print(f"  - Final learning rate: {final_metrics['learning_rate']:.2e}")
 
 # Get HuggingFace username
 hf_username = os.environ.get("HF_USERNAME")
@@ -212,6 +251,7 @@ tags:
 - lora
 - qwen
 - code
+- rslora
 datasets:
 - custom
 ---
@@ -223,7 +263,9 @@ This model is a fine-tuned version of [Qwen/Qwen2.5-Coder-7B-Instruct](https://h
 ## Training Details
 
 - **Base model**: Qwen2.5-Coder-7B-Instruct
-- **Training method**: LoRA (r=256, alpha=512)
+- **Training method**: LoRA with RSLoRA (r=512, alpha=1024)
+- **Training hardware**: NVIDIA RTX 6000 Ada (48GB)
+- **Training optimizations**: Flash Attention 2, BF16, TF32, Sequence Packing
 - **Training date**: {datetime.datetime.now().strftime('%Y-%m-%d')}
 - **Framework**: transformers, peft, trl
 
