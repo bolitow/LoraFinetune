@@ -22,6 +22,13 @@ if torch.cuda.is_available():
 print(f"\n[{datetime.datetime.now()}] Loading dataset...")
 dataset = load_dataset("data", split='train')
 print(f"Dataset loaded with {len(dataset)} examples")
+
+# Limit to 10k examples for faster training
+if len(dataset) > 10000:
+    print(f"Limiting dataset to 10,000 examples for faster training...")
+    dataset = dataset.select(range(10000))
+    print(f"Dataset reduced to {len(dataset)} examples")
+
 print(Fore.YELLOW + str(dataset[2]) + Fore.RESET) 
 
 def format_chat_template(batch, tokenizer):
@@ -125,9 +132,9 @@ trainer = SFTTrainer(
     train_dataset=train_dataset,
     args=SFTConfig(
         output_dir="Qwen2.5-Coder-7B-LoRA",
-        num_train_epochs=3,
-        per_device_train_batch_size=2,  # Reduced to 2 to avoid OOM
-        gradient_accumulation_steps=8,   # Increased to 8 (effective batch = 16)
+        num_train_epochs=1,             # Reduced to 1 epoch for faster training
+        per_device_train_batch_size=4,  # Increased to 4 for faster training
+        gradient_accumulation_steps=4,   # Reduced to 4 (effective batch = 16)
         warmup_ratio=0.1,               # 10% warmup steps
         max_steps=-1,                   # Train on full dataset
         learning_rate=5e-5,             # Optimized learning rate
@@ -149,15 +156,17 @@ trainer = SFTTrainer(
     peft_config=peft_config,
 )
 print(f"Trainer initialized successfully")
-print(f"\nOptimized training parameters for RTX 6000 Ada (Memory-conscious):")
-print(f"  - Per device batch size: 2")
-print(f"  - Gradient accumulation: 8")
+print(f"\nOptimized training parameters for RTX 6000 Ada (Fast training mode):")
+print(f"  - Dataset: Limited to 10,000 examples")
+print(f"  - Epochs: 1 (reduced from 3)")
+print(f"  - Per device batch size: 4")
+print(f"  - Gradient accumulation: 4")
 print(f"  - Effective batch size: 16")
 print(f"  - Learning rate: 5e-5 (cosine decay)")
 print(f"  - Optimizer: 8-bit paged AdamW")
 print(f"  - Max sequence length: 1024")
 print(f"  - Precision: bfloat16 + TF32")
-print(f"  - Dataset size: {len(train_dataset)} examples")
+print(f"  - Total training steps: ~{len(train_dataset) // 16}")
 
 print(f"\n[{datetime.datetime.now()}] Starting training...")
 print(f"=" * 50)
