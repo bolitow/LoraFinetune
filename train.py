@@ -76,8 +76,14 @@ quant_config = BitsAndBytesConfig(
 print(f"\n[{datetime.datetime.now()}] Loading model {base_model} with 4-bit quantization...")
 print(f"This may take a few minutes...")
 
-# Enable Flash Attention 2 for RTX 6000 Ada
-os.environ["FLASH_ATTENTION_SKIP_CUDA_BUILD"] = "TRUE"
+# Try to use Flash Attention 2 if available
+try:
+    import flash_attn
+    attn_implementation = "flash_attention_2"
+    print(f"Flash Attention 2 detected, will use optimized attention")
+except ImportError:
+    attn_implementation = "eager"  # Fallback to standard attention
+    print(f"Flash Attention 2 not available, using standard attention")
 
 model = AutoModelForCausalLM.from_pretrained(
     base_model,
@@ -85,10 +91,10 @@ model = AutoModelForCausalLM.from_pretrained(
     quantization_config=quant_config,
     token=os.environ.get("HF_TOKEN"),  # Use environment variable
     cache_dir="./workspace",
-    attn_implementation="flash_attention_2",  # Enable Flash Attention 2
+    attn_implementation=attn_implementation,
     torch_dtype=torch.bfloat16,
 )
-print(f"Model loaded successfully with Flash Attention 2!")
+print(f"Model loaded successfully with {attn_implementation} attention!")
 
 print(f"\n[{datetime.datetime.now()}] Preparing model for training...")
 model.gradient_checkpointing_enable()
