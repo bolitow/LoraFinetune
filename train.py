@@ -10,6 +10,9 @@ from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 import torch
 from huggingface_hub import HfApi, create_repo
 
+# Set PyTorch memory allocation config to avoid fragmentation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 print(f"[{datetime.datetime.now()}] Starting training script...")
 print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
@@ -116,43 +119,44 @@ print(f"LoRA config: r={peft_config.r}, alpha={peft_config.lora_alpha}, RSLoRA=T
 
 print(f"\n[{datetime.datetime.now()}] Initializing trainer...")
 
-# Optimized settings for RTX 6000 Ada (48GB VRAM)
+# Optimized settings for RTX 6000 Ada (48GB VRAM) - Memory conscious
 trainer = SFTTrainer(
     model,
     train_dataset=train_dataset,
     args=SFTConfig(
         output_dir="Qwen2.5-Coder-7B-LoRA",
         num_train_epochs=3,
-        per_device_train_batch_size=8,  # Increased from 1 to 8 for 48GB VRAM
-        gradient_accumulation_steps=2,   # Reduced from 4 to 2 (effective batch = 16)
+        per_device_train_batch_size=2,  # Reduced to 2 to avoid OOM
+        gradient_accumulation_steps=8,   # Increased to 8 (effective batch = 16)
         warmup_ratio=0.1,               # 10% warmup steps
         max_steps=-1,                   # Train on full dataset
         learning_rate=5e-5,             # Optimized learning rate
         lr_scheduler_type="cosine",     # Cosine decay for better convergence
         logging_steps=10,
-        optim="paged_adamw_32bit",     # Better optimizer for larger batches
+        optim="paged_adamw_8bit",      # Use 8-bit optimizer to save memory
         save_strategy="no",             # Disable checkpoint saving during training
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},  # More memory efficient
         report_to="none",
         bf16=True,                      # Use bf16 instead of fp16 for better stability
         tf32=True,                      # Enable TF32 on Ada architecture
-        dataloader_num_workers=4,       # Parallel data loading
+        dataloader_num_workers=2,       # Reduced workers to save memory
         remove_unused_columns=False,
         dataset_text_field="text",      # Specify text field explicitly
-        max_seq_length=2048,            # Optimal sequence length
-        packing=True,                   # Pack multiple examples in one sequence
+        max_seq_length=1024,            # Reduced sequence length to save memory
+        packing=False,                  # Disable packing to reduce memory complexity
     ),
     peft_config=peft_config,
 )
 print(f"Trainer initialized successfully")
-print(f"\nOptimized training parameters for RTX 6000 Ada:")
-print(f"  - Per device batch size: 8")
-print(f"  - Gradient accumulation: 2")
+print(f"\nOptimized training parameters for RTX 6000 Ada (Memory-conscious):")
+print(f"  - Per device batch size: 2")
+print(f"  - Gradient accumulation: 8")
 print(f"  - Effective batch size: 16")
 print(f"  - Learning rate: 5e-5 (cosine decay)")
+print(f"  - Optimizer: 8-bit paged AdamW")
+print(f"  - Max sequence length: 1024")
 print(f"  - Precision: bfloat16 + TF32")
-print(f"  - Sequence packing: enabled")
 print(f"  - Dataset size: {len(train_dataset)} examples")
 
 print(f"\n[{datetime.datetime.now()}] Starting training...")

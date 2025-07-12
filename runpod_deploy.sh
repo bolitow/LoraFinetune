@@ -24,6 +24,10 @@ cp pyproject_use_this_one_on_runpod.toml pyproject.toml
 echo "Installing dependencies..."
 uv sync
 
+# Step 4b: Install flash-attn separately with special build flags
+echo "Installing Flash Attention 2 for optimized performance..."
+uv pip install flash-attn --no-build-isolation
+
 # Step 5: Set HuggingFace token and username (if not already set)
 if [ -z "$HF_TOKEN" ]; then
     echo "WARNING: HF_TOKEN environment variable not set!"
