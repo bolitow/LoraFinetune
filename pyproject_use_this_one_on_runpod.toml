@@ -14,5 +14,6 @@ dependencies = [
     "peft>=0.15.2",
     "pydantic>=2.11.4",
     "trl>=0.12.2",
+    "torch>=2.1.0", 
     "flash-attn>=2.5.0",
 ]
